@@ -12,6 +12,7 @@ mean degree, clustering coefficient
 计算方法：
 为了方便以后调用，在每个评论发布后都计算一次dynamic feature。可能会导致计算时间很长。
 """
+import codecs
 import os.path
 from datetime import datetime
 
@@ -33,22 +34,23 @@ def main(section_id, base_path):
     
     #topic_list = ['1377621']
     # 这里不用post_id替换topic_id的原因是：feature_dict中使用了“topic_id”作为key
+    valid_topic_list = [] # 真正抽取特征的post id列表
     for topic_id in topic_list:
         path = base_path + section_id + '/' + topic_id + '-info.txt'
         if not os.path.exists(path):
             continue
-            
-        print 'Reading topic file: ', path
-        tpath = target_base_path + group_id + '/' + topic_id + '.txt'
         
-        f = open(path, 'r')
-        tf = open(tpath, 'w')
-                
-        # read topic info
+        tpath = target_base_path + section_id + '/' + topic_id + '.txt'
+        tf = codecs.open(tpath, 'w', 'utf8')
+        
+        f = codecs.open(path, 'r', 'utf8')
+        print 'Extracting features from post file: ', path
+        
+        # 第一行为post本身的信息
         line = f.readline().strip()
         seg_list = line.split('[=]')
         
-        if len(seg_list) < 8:
+        if len(seg_list) != 8:
             print 'Error in the first line of topic file: ', path
             f.close()
             tf.close()
@@ -57,7 +59,7 @@ def main(section_id, base_path):
         lz = seg_list[2] # LZ id for author reply to, topic_id for comment tree
         lz_user_name = seg_list[3] # 楼主的用户名
         pubdate = seg_list[5]
-        num_comment = int(seg_list[6])
+        num_comment = int(seg_list[6]) # NOTE：可能该文件中存储的评论数不足此数值，由于之前抓取错误导致
         
         # first line: topic info
         feature_dict = dict()
@@ -66,6 +68,9 @@ def main(section_id, base_path):
         feature_dict['pubdate'] = pubdate
         feature_dict['num_comment'] = num_comment
         tf.write(str(feature_dict) + '\n')
+        
+        #NOTE: 因为可能在抓取时保存不完整，真正存在的评论数量可能少于第一行所表明的数字
+        # 关于这一点需要检查，如果不合格，则删除
         
         # build two graphs
         comment_tree = Graph(directed=True)
@@ -88,6 +93,7 @@ def main(section_id, base_path):
         author_dict[lz] = author_reply.vcount()
         author_reply.add_vertex(lz)
         
+        flag = True     # 标记该文件是否合乎规范
         max_depth = 0
         # 用于描述comment tree讨论的激烈程度：根节点为0，处于depth为1的节点贡献是1，依次类推
         weighted_depth_sum = 0
@@ -98,14 +104,16 @@ def main(section_id, base_path):
             line = line.strip()
             seg_list = line.split('[=]')
             
-            if len(seg_list) < 8:
+            if len(seg_list) != 8:
                 print 'Error in the comment line of topic file: ', path
+                flag = False
                 break
             
-            cid = seg_list[0]
-            pid = seg_list[3]
-            pubdate = seg_list[4]
-            replyto = seg_list[5]
+            cid = seg_list[0] # 评论ID
+            pid = seg_list[3] # 用户的ID
+            uname = seg_list[4] # 用户昵称
+            pubdate = seg_list[5] # 发表时间
+            replyto = seg_list[6] # 评论引用
             
             feature_dict['cid'] = cid
             feature_dict['pid'] = pid
@@ -131,18 +139,15 @@ def main(section_id, base_path):
             
             replyto_pid = ''
             commenton_cid = ''
+            parent_index = 0 # 在评论树上，该节点的父节点
             if replyto == '':
                 commenton_cid = topic_id
                 parent_index = comment_dict[commenton_cid]
-                #comment_tree.add_edge(cid, topic_id)
                 replyto_pid = lz
-                #author_reply.add_edge(pid, lz)
             else:
                 commenton_cid = replyto
-                #comment_tree.add_edge(cid, replyto)
                 parent_index = comment_dict[commenton_cid]
                 replyto_pid = comment_tree.vs[parent_index]['author']
-                #author_reply.add_edge(pid, comment_tree.vs[index]['author'])
             
             comment_tree.add_edge(cid, commenton_cid)
             comment_author_bigraph.add_edge(pid, commenton_cid)
@@ -150,6 +155,7 @@ def main(section_id, base_path):
             # 为cid节点添加depth属性
             index = comment_dict[cid]
             current_depth = comment_tree.vs[index]['depth'] = comment_tree.vs[parent_index]['depth'] + 1
+            
             weighted_depth_sum += current_depth
             avg_weighted_depth_sum = weighted_depth_sum * 1.0 / current_comment_count
             if current_depth > max_depth:
@@ -163,9 +169,9 @@ def main(section_id, base_path):
                 if author_reply.get_eid(v1, v2, directed=True, error=False) == -1:
                     author_reply.add_edge(v1, v2)
             
-            # number of participating commenters
+            # number of current participating commenters
             num_authors = author_reply.vcount()
-            feature_dict['num_authors']             = num_authors    
+            feature_dict['num_authors']             = num_authors
             
             # write statics in target file
             mean_degree             = sum(author_reply.degree()) * 1.0 / author_reply.vcount()
@@ -202,7 +208,7 @@ def main(section_id, base_path):
             feature_dict['diffusion_depth']         = diffusion_depth
             feature_dict['avg_weighted_depth_sum']  = avg_weighted_depth_sum
             feature_dict['avg_path_length']         = average_path_length   # Wiener index, the average distance between all paris of nodes in a cascade
-                        
+            
             # the comment-author two model network properties
             ca_mean_degree              = sum(comment_author_bigraph.degree()) * 1.0 / comment_author_bigraph.vcount()
             ca_avg_local_transitivity   = comment_author_bigraph.transitivity_avglocal_undirected(mode='nan') # the avg of local transitivity
@@ -227,6 +233,10 @@ def main(section_id, base_path):
             if current_comment_count >= MAX_COMMENT:
                 break
 
+        # 如果未达到最大评论数，而且当前的评论数不足第一行所宣称的总评论数，则忽略该post
+        if current_comment_count < MAX_COMMENT and num_comment != current_comment_count:
+            flag = False
+            
         # print dynamic feature
         #plot(comment_tree)
         #plot(author_reply)
@@ -237,9 +247,14 @@ def main(section_id, base_path):
         #print author_reply.transitivity_avglocal_undirected(mode='zero') # the avg of local transitivity
         
         #print author_reply.assortativity_degree(False)
-        
         f.close()
         tf.close()
+        
+        if flag:
+            valid_topic_list.append(topic_id)
+        else:
+            # 如果不合规范，则删除
+            os.popen('rm -f ' + tpath)
         
         
 if __name__ == '__main__':
