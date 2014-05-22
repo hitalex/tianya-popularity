@@ -29,6 +29,7 @@ def main(section_id, base_path):
     """
     post_list_path = base_path + section_id + '-post-list.txt'
     topic_list = load_id_list(post_list_path)
+    topic_list = list(set(topic_list)) # 删除重复post id
     
     target_base_path = 'data-dynamic/'
     
@@ -253,14 +254,21 @@ def main(section_id, base_path):
         if flag:
             valid_topic_list.append(topic_id)
         else:
+            print 'Remove file: ', tpath
             # 如果不合规范，则删除
             os.popen('rm -f ' + tpath)
         
+    # 保存所有有效的讨论帖id
+    path = target_base_path + section_id + '-post-list-feature.txt'
+    f = codecs.open(path, 'w', 'utf8')
+    for topic_id in valid_topic_list:
+        f.write(topic_id + '\n')
+    f.close()
         
 if __name__ == '__main__':
     import sys
     #section_id = sys.argv[1]
-    section_id = 'free'
+    section_id = 'test'
     base_path = '/home/kqc/dataset/tianya-forum/'
     
     main(section_id, base_path)
