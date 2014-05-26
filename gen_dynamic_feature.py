@@ -22,7 +22,7 @@ from igraph import *
 from utils import load_id_list
 
 # 评论数量的最大值
-MAX_COMMENT = 1000
+MAX_COMMENT = 2000
 
 def main(section_id, base_path):
     """ 生成动态因素
@@ -42,10 +42,15 @@ def main(section_id, base_path):
             continue
         
         tpath = target_base_path + section_id + '/' + topic_id + '.txt'
-        tf = codecs.open(tpath, 'w', 'utf8')
+        # 如果目标输出已经存在，则忽略
+        if os.path.exists(tpath):
+            continue
         
         f = codecs.open(path, 'r', 'utf8')
         print 'Extracting features from post file: ', path
+        
+        # 记录需要存储的字符串，该字符串可能较大，最大可能几M
+        result_string = ""
         
         # 第一行为post本身的信息
         line = f.readline().strip()
@@ -54,7 +59,6 @@ def main(section_id, base_path):
         if len(seg_list) != 8:
             print 'Error in the first line of topic file: ', path
             f.close()
-            tf.close()
             continue
         
         lz = seg_list[2] # LZ id for author reply to, topic_id for comment tree
@@ -68,7 +72,8 @@ def main(section_id, base_path):
         feature_dict['lz'] = lz
         feature_dict['pubdate'] = pubdate
         feature_dict['num_comment'] = num_comment
-        tf.write(str(feature_dict) + '\n')
+        #tf.write(str(feature_dict) + '\n')
+        result_string += (str(feature_dict) + '\n')
         
         #NOTE: 因为可能在抓取时保存不完整，真正存在的评论数量可能少于第一行所表明的数字
         # 关于这一点需要检查，如果不合格，则删除
@@ -155,7 +160,12 @@ def main(section_id, base_path):
             
             # 为cid节点添加depth属性
             index = comment_dict[cid]
-            current_depth = comment_tree.vs[index]['depth'] = comment_tree.vs[parent_index]['depth'] + 1
+            if comment_tree.vs[parent_index]['depth'] == None:
+                #TODO: 未知错误，举例：3211910
+                flag = False
+                break
+            else:
+                current_depth = comment_tree.vs[index]['depth'] = comment_tree.vs[parent_index]['depth'] + 1
             
             weighted_depth_sum += current_depth
             avg_weighted_depth_sum = weighted_depth_sum * 1.0 / current_comment_count
@@ -229,7 +239,9 @@ def main(section_id, base_path):
             #feature_dict['ca_max_cohesions']          = ca_max_cohesions
             
             # write feature dict to file
-            tf.write(str(feature_dict) + '\n')
+            #tf.write(str(feature_dict) + '\n')
+            result_string += (str(feature_dict) + '\n')
+            
             # do not consider threads who has more than 1000 comments
             if current_comment_count >= MAX_COMMENT:
                 break
@@ -249,15 +261,15 @@ def main(section_id, base_path):
         
         #print author_reply.assortativity_degree(False)
         f.close()
-        tf.close()
         
         if flag:
             valid_topic_list.append(topic_id)
-        else:
-            print 'Remove file: ', tpath
-            # 如果不合规范，则删除
-            os.popen('rm -f ' + tpath)
-        
+            # 输出到文件
+            print 'Saving: ', tpath
+            tf = codecs.open(tpath, 'w', 'utf8')
+            tf.write(result_string)
+            tf.close()
+            
     # 保存所有有效的讨论帖id
     path = target_base_path + section_id + '-post-list-feature.txt'
     f = codecs.open(path, 'w', 'utf8')
@@ -267,8 +279,8 @@ def main(section_id, base_path):
         
 if __name__ == '__main__':
     import sys
-    #section_id = sys.argv[1]
-    section_id = 'test'
-    base_path = '/home/kqc/dataset/tianya-forum/'
+    section_id = sys.argv[1]
+    #section_id = 'free'
+    base_path = '/home/kongqingchao/dataset/tianya-forum/'
     
     main(section_id, base_path)
